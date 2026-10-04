@@ -76,12 +76,89 @@ To ensure evaluators and judges have full transparency into the underlying physi
 
 ---
 
+## 🔄 System Flowcharts
+
+### A. End-to-End Decision Flow (what happens for one DR request)
+
+```mermaid
+flowchart TD
+    A([Grid / Facility request:<br/>reduce X kW for D min]) --> B[1. SENSE<br/>zone temps, outdoor T, occupancy]
+    B --> C[2. PREDICT<br/>baseline trajectory from RC model]
+    C --> D[3. GENERATE<br/>candidate actions:<br/>setpoint relax, zone priority, lighting cut]
+    D --> E{4. CONSTRAIN<br/>occupied zones T ≤ 25.8 °C,<br/>essential load untouched, ...?}
+    E -- No --> F[Reject candidate]
+    E -- Yes --> G[5. EVALUATE<br/>shortfall, rebound, thermal headroom]
+    G --> H[6. DECIDE<br/>best feasible action]
+    H --> I{Delivered kW vs request}
+    I -- ≥ 97% --> J[FULL feasible]
+    I -- 50% to 97% --> K[PARTIAL feasible]
+    I -- < 50% --> L[INFEASIBLE]
+    J --> M[7. ACT → 8. VERIFY → 9. LEARN]
+    K --> M
+    L --> M
+    M --> N([Report: feasible kW, safe duration,<br/>comfort risk, rebound risk, confidence])
+```
+
+### B. Constraint Filter (why an action is accepted or rejected)
+
+```mermaid
+flowchart LR
+    C[Candidate action] --> S[Simulate every zone<br/>with RC model]
+    C --> Q{Essential base load cut = 0,<br/>lighting ≥ minimum level,<br/>HVAC 0–100 %, duration ≤ max?}
+    Q -- No --> R0[❌ Rejected: static rule]
+    Q -- Yes --> S
+    S --> T{Occupied zones<br/>T ≤ 25.8 °C and ≥ 23 °C<br/>throughout?}
+    T -- No --> R[❌ Rejected: comfort breach]
+    T -- Yes --> P{HVAC output ≤<br/>equipment capacity?}
+    P -- No --> R2[❌ Rejected: equipment limit]
+    P -- Yes --> B{Recovery peak ≤<br/>baseline day peak + 10 %?}
+    B -- No --> R3[❌ Rejected: new peak]
+    B -- Yes --> OK[✅ Feasible candidate]
+```
+
+### C. Closed-Loop Learning (stages 7 to 9)
+
+```mermaid
+flowchart LR
+    A[Dispatch plan] --> B[Simulated plant responds<br/>UA x1.07, C x0.95, solar x1.05 vs model]
+    B --> C[Compare actual reduction vs<br/>model-predicted reduction]
+    C --> D[Compute correction factor]
+    D --> E[Apply memory correction<br/>to next flexibility estimate]
+    E --> A
+```
+
+---
+
+## 🧮 Formula Reference (all equations used by the engine)
+
+| # | Quantity | Formula | Where in code |
+| :-: | :--- | :--- | :--- |
+| 1 | **Zone temperature update** (discrete RC step) | $T_{k+1} = T_k + \dfrac{\Delta t}{C}\left[\,UA\,(T_{out} - T_k) + Q_{int} + Q_{solar} - Q_{hvac}\,\right]$ | `models/thermal_model.py` |
+| 2 | **Continuous form** | $C\,\dfrac{dT}{dt} = UA\,(T_{out}-T) + Q_{int} + Q_{solar} - Q_{hvac}$ | same |
+| 3 | **Thermostat cooling fraction** | $f = \text{clip}\!\left(\dfrac{T - 23.5}{25.5 - 23.5},\,0,\,1\right)$, $\;Q_{hvac} = f \cdot Q_{cap}$ | `models/baseline_controller.py` |
+| 4 | **COP derating with outdoor temp** | $COP(T_{out}) = COP_{ref}\cdot\max\!\big(1 - 0.01\,(T_{out}-35),\;0.5\big)$ | `models/load_model.py` |
+| 5 | **HVAC electrical power** | $P_{hvac} = \dfrac{Q_{hvac}}{COP(T_{out})}$ | `models/load_model.py` |
+| 6 | **Total building load** | $P_{total} = P_{hvac} + P_{lighting} + P_{base}$ | `models/load_model.py` |
+| 7 | **Delivered reduction** | $\Delta P = P_{baseline} - P_{controlled}$ over the event window | `flexibility/engine.py` |
+| 8 | **Feasibility class** | Full if $\dfrac{\Delta P}{P_{req}} \ge 0.97$; Infeasible if $< 0.50$; else Partial | `flexibility/engine.py` |
+| 9 | **Rebound (recovery excess)** | $P_{rebound}(t) = P_{recovery}(t) - P_{baseline}(t)$; peak = $\max_t P_{rebound}$ | `flexibility/rebound.py` |
+| 10 | **Comfort constraint** (occupied zones) | $23.0 \le T_{zone}(t) \le 26.0 - 0.2 = 25.8\,^\circ\text{C}$ | `flexibility/constraints.py` |
+| 11 | **New-peak constraint** | $\max_t P_{total}(t) \le 1.10 \times P_{baseline,peak}$ | `flexibility/constraints.py` |
+| 12 | **Comfort-risk level** | worst thermal margin $m$: Low if $m \ge 0.5\,^\circ\text{C}$, Medium if $m \ge 0.3\,^\circ\text{C}$, else High | `flexibility/engine.py` |
+| 13 | **Energy** | $E = \sum_k P_k\,\Delta t$ (kWh) | `models/load_model.py` |
+
+**Symbols:** $T$ zone temperature (°C), $T_{out}$ outdoor temperature (°C), $C$ thermal capacitance (kWh/°C), $UA$ envelope conductance (kW/°C), $Q_{int}$ internal gains from people, equipment and lights (kW), $Q_{solar}$ solar gain (kW), $Q_{hvac}$ cooling delivered (kW thermal), $\Delta t$ timestep (h).
+
+> All parameter values are **simulation assumptions** (see the Simulation Parameters section above).
+
+---
+
 ## ✨ Key Technical Innovations
 
 ### 1. Grey-Box RC Thermal Network Modeling
 Building thermal dynamics are simulated using a first-order lumped capacitance RC thermal model:
 
-$$\frac{dT_{\text{zone}}}{dt} = \frac{T_{\text{ambient}} - T_{\text{zone}}}{R_{\text{envelope}} \cdot C_{\text{zone}}} + \frac{Q_{\text{occupants}} + Q_{\text{solar}} - Q_{\text{hvac}}}{C_{\text{zone}}}$$
+$$C_{\text{zone}}\frac{dT_{\text{zone}}}{dt} = UA\,(T_{\text{out}} - T_{\text{zone}}) + Q_{\text{int}} + Q_{\text{solar}} - Q_{\text{hvac}}, \qquad UA = \frac{1}{R_{\text{envelope}}}$$
 
 - **Thermal Mass Heat Capacity ($C_{\text{zone}}$):** Captures heat stored in structural walls, floors, and furniture acting as a "thermal battery".
 - **Thermal Resistance ($R_{\text{envelope}}$):** Models building envelope heat gain based on outdoor ambient weather conditions.
@@ -90,7 +167,7 @@ $$\frac{dT_{\text{zone}}}{dt} = \frac{T_{\text{ambient}} - T_{\text{zone}}}{R_{\
 Candidate control actions are evaluated across strict thermal bounds:
 - **Upper Comfort Boundary:** $26.0^\circ\text{C}$ (Hard limit).
 - **Safety Planning Limit:** $25.8^\circ\text{C}$ (Safety headroom threshold).
-- **Max Rebound Guard:** Ensures post-event recovery power spike does not exceed the day's baseline peak demand.
+- **Max Rebound Guard:** Post-event recovery power may not exceed the day's baseline peak demand by more than a $10\%$ tolerance.
 
 ### 3. Proof of Dynamic Flexibility
 Building flexibility is **not a constant number**. The engine proves that available kW reduction fluctuates dynamically across 24 hours based on:
