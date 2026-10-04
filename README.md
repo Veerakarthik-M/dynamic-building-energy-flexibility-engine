@@ -57,6 +57,25 @@ The engine operates on a closed-loop **SENSE $\rightarrow$ LEARN** pipeline:
 
 ---
 
+## 📐 Simulation Parameters (Grey-Box Specifications)
+
+To ensure evaluators and judges have full transparency into the underlying physics simulation, the engine uses the following explicitly defined environmental and operational boundary conditions:
+
+### ☀️ Weather Profiles
+- **Hot (Peak Summer):** Mean Outdoor Temp = $34.0^\circ\text{C}$, Amplitude = $\pm 5.0^\circ\text{C}$ (Peak at 15:00), Solar Multiplier = $1.0\times$
+- **Mild (Shoulder Season):** Mean Outdoor Temp = $27.0^\circ\text{C}$, Amplitude = $\pm 4.0^\circ\text{C}$ (Peak at 15:00), Solar Multiplier = $0.7\times$
+
+### 👥 Occupancy Levels
+- **Low:** $50\%$ of the baseline scheduled capacity.
+- **Normal:** $100\%$ of the baseline scheduled capacity.
+- **High:** $115\%$ of the baseline scheduled capacity (Simulating overcrowding or peak-event scenarios, capped at max physical capacity).
+
+### 🌡️ Comfort Constraints
+- **Absolute Comfort Band:** $23.0^\circ\text{C}$ (lower limit) to $26.0^\circ\text{C}$ (upper limit).
+- **Proactive Planning Limit:** $25.8^\circ\text{C}$ (Ensures a $0.2^\circ\text{C}$ safety buffer to prevent mathematical limit violations during HVAC curtailment).
+
+---
+
 ## ✨ Key Technical Innovations
 
 ### 1. Grey-Box RC Thermal Network Modeling
