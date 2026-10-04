@@ -1,0 +1,1 @@
+"""Synthetic (SIMULATION) data generation."""

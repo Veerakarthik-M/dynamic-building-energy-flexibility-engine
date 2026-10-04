@@ -1,0 +1,3 @@
+Scenario,Weather,Occupancy,Requested (kW),Available Flex (kW),Delivered (kW),Status,Safe Duration (min),Comfort Risk,Rebound (kW),Rebound (min)
+College,hot,normal,50.0,36.45713195657848,36.45713195657848,partial,20,Low,22.727801026959753,55.0
+Office,mild,normal,20.0,19.36758406980482,19.36758406980482,partial,20,Low,9.452697897354,40.0
